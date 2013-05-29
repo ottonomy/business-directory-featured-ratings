@@ -325,7 +325,9 @@ class My_Featured_Ratings_Admin {
             $link = site_url( "business-directory/". $review->listing_id . "/" . $review->post_name );
             $render = "<li class='featured-review'>\n";
             $render .= "<h4><a href='$link'>$review->post_title</a></h4>\n";
-            $render .= "<p>Rating: $review->rating: $review->comment</p>\n";
+            $render .= "<p>" . sprintf('<span class="wpbdp-ratings-stars" data-readonly="readonly" data-value="%s">%s</span><br />', $review->rating,$review->rating) . " $review->rating: $review->comment</p>\n";
+            
+
             $render .= "<div class='user-name'>$review->user_name</div>";
             $render .= "</li>\n";
 
