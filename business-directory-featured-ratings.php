@@ -22,6 +22,7 @@ class My_Featured_Ratings_Admin {
     public $items;
     public $item_posts;
     public $_column_headers;
+    public $item_posts_index = array();
 
     function __construct(){
         
@@ -93,7 +94,7 @@ class My_Featured_Ratings_Admin {
             if (!is_int($query_result))
                 return $query_result;
             else
-                return "That review is already featured.";
+                return "You have featured a review!";
         }
         elseif ($action == 'unfeature') {
             $query_result = $wpdb->delete( $tablename , array( "rating_id" => $rating_id ) , array( '%d' ) );
@@ -101,12 +102,36 @@ class My_Featured_Ratings_Admin {
             if (!is_int($query_result))
                 return $query_result;
             else
-                return "That review is already unfeatured.";
+                return "You have unfeatured a review.";
         }
     }
 
+    function get_pagination(){
+        if ( isset($_REQUEST['pg']) ) {
+            $pagenum = $_REQUEST['pg'];
+        }
+        else
+            return 0;
+
+        if (is_integer(intval($pagenum)) && $pagenum > 0 )
+            return $pagenum;
+        return 0;
+    }
+    function pagination_links(){
+        $html = "";
+        $current_page = $this->get_pagination();
+        if ( $current_page > 1 )
+            $html .= sprintf( '<a href="?page=%s&pg=">First</a> ',$_REQUEST['page'], 0 );
+        if ( $current_page > 0 )
+            $html .= sprintf( '<a href="?page=%s&pg=%s">Previous</a> ',$_REQUEST['page'], $current_page - 1 );
+        if ( count($this->item_posts_index) >= 30 )
+            $html .= sprintf( '<a href="?page=%s&pg=%s">Next</a> ',$_REQUEST['page'], $current_page + 1 );
+        return $html;
+    }
+
     public function prepare_items() {
-    
+        $pagenum = $this->get_pagination();
+
         global $wpdb;
         $ratings_table = $wpdb->prefix . 'wpbdp_ratings';
         $featured_ratings_table = $wpdb->prefix . 'wpbdp_featured_ratings';
@@ -123,7 +148,7 @@ class My_Featured_Ratings_Admin {
         Ordering DESC,
         r.created_on DESC
         LIMIT %d, %d;
-        ", 1, 0, 30); //refactor to handle pagination via a function parameter
+        ", 1, 30 * $pagenum, 30); 
         
       
         // SELECT * FROM {$wpdb->prefix}wpbdp_ratings WHERE approved = %d ORDER BY id DESC", 1);
@@ -132,6 +157,7 @@ class My_Featured_Ratings_Admin {
         $this->_column_headers = $this->get_columns();
 
         $this->item_posts = $this->prepare_listings_array();
+        $this->item_posts_index = $this->prepare_listings_index();
     }
 
     //grabs post objects for listings to display name and permalink prettily
@@ -145,14 +171,40 @@ class My_Featured_Ratings_Admin {
         }
 
         $args = array(
-            'post_type' => 'wpbdp-listing',
+            'post_type' => 'wpbdp_listing',
             'post__in' => $post_ids
         );
-        return query_posts($args);
+        
+        $query = new WP_Query( $args );
+        return $query;
 
     }
 
+    function prepare_listings_index() {
+        $result = array();
+        global $post;
+        if ( $this->item_posts->have_posts() ){
+            while ($this->item_posts->have_posts()){
+                $this->item_posts->the_post();
+                $result[get_the_id()] = array(
+                        "permalink" => get_permalink(),
+                        "title" => get_the_title()
+                    );
+            }
+        }
 
+        // Restore original Post Data
+        wp_reset_postdata();
+        return $result;
+    }
+
+    public function listing_link_html($id, $class = ''){
+        if (is_integer(intval($id))){
+            $post_array = $this->item_posts_index[$id];
+            return "<a href='" . $post_array["permalink"] ."' class='" . $class . "'>" . $post_array["title"] . "</a>";
+        }
+        return "Invalid listing ID";
+    }
 
     /* Column result functions */
 
@@ -186,9 +238,8 @@ class My_Featured_Ratings_Admin {
     }
 
     public function column_listing($row) {
-//             //REFACTOR TO do a join on prepare_columns AVOID 2n additional DB queries per display of this screen
-//         return sprintf('<a href="%s">%s</a>', get_permalink($row->listing_id), get_the_title($row->listing_id));
-    return "DEBUG: Some Listing Link";
+        return $this->listing_link_html($row->listing_id, "listing-link");
+        // return "DEBUG: Some Listing Link";
      }
     
     public function column_featured($row) {
@@ -240,7 +291,7 @@ class My_Featured_Ratings_Admin {
     }
 
     function featured_ratings_admin_page_top() {
-        $html = '<div id="icon-edit" class="icon32 icon32-posts-post"><br></div>
+        $html = '<div class="featured-rating-page-wrapper"><div id="icon-edit" class="icon32 icon32-posts-post"><br></div>
                 <h2>Manage Featured Ratings</h2>'."\n";
         return $html;
     }
@@ -258,7 +309,10 @@ class My_Featured_Ratings_Admin {
        
         //cycle through each item building out the table, calling column_ functions for each cell
         foreach($this->items as $current_rating){
-            $tablerow = "<tr>\n";
+            if ($current_rating->Ordering == 1)
+                $tablerow = "<tr class='featured-row'>\n";
+            else
+                $tablerow = "<tr class='normal-row'>\n";
 
             foreach ($this->_column_headers as $column => $nicename) {
                 $tablerow .= "<td>";
@@ -280,10 +334,15 @@ class My_Featured_Ratings_Admin {
     }
 
     function featured_ratings_admin_page_bottom() {
-        $html = "<p>Page Footer</p>";
+        //DEBUGGING: $html = "<p>". serialize($this->item_posts_index) ."</p><p>" . json_encode($this->item_posts) . "</p></div>";
+        $html = "";
+        $html .= $this->pagination_links();
         return $html;
     }
 
+
+
+    /**** FRONT END DATA DISPLAY *****/
     function query_featured_reviews(){
         global $wpdb;
         $ratings_table = $wpdb->prefix . 'wpbdp_ratings';
@@ -325,7 +384,7 @@ class My_Featured_Ratings_Admin {
             $link = site_url( "business-directory/". $review->listing_id . "/" . $review->post_name );
             $render = "<li class='featured-review'>\n";
             $render .= "<h4><a href='$link'>$review->post_title</a></h4>\n";
-            $render .= "<p>" . sprintf('<span class="wpbdp-ratings-stars" data-readonly="readonly" data-value="%s">%s</span><br />', $review->rating,$review->rating) . " $review->rating: $review->comment</p>\n";
+            $render .= "<p>" . sprintf('<span class="wpbdp-ratings-stars" data-readonly="readonly" data-value="%s">%s</span><br />', $review->rating,$review->rating) . "$review->comment</p>\n";
             
 
             $render .= "<div class='user-name'>$review->user_name</div>";
@@ -338,7 +397,11 @@ class My_Featured_Ratings_Admin {
         return $html;
     }
 
+    function register_css(){
+        wp_register_style( 'business-directory-featured-ratings-style', plugins_url( 'business-directory-featured-ratings.css' , __FILE__ ), array(), '0.1' );
 
+        wp_enqueue_style( 'business-directory-featured-ratings-style' );
+    }
 } //class
 
 $GLOBALS['featured-ratings-admin-page'] = new My_Featured_Ratings_Admin();
@@ -346,6 +409,10 @@ register_activation_hook( __FILE__, array($GLOBALS['featured-ratings-admin-page'
 
 //add menu item
 add_action( 'admin_menu', array($GLOBALS['featured-ratings-admin-page'], 'featured_ratings_plugin_menu') );
+
+//register and enqueue stylesheet:
+add_action( 'wp_enqueue_scripts', array($GLOBALS['featured-ratings-admin-page'], 'register_css'));
+add_action( 'admin_enqueue_scripts', array($GLOBALS['featured-ratings-admin-page'], 'register_css'));
 
 
 
@@ -364,9 +431,7 @@ class FeaturedRatingsWidget extends WP_Widget {
         echo $before_title . $title . $after_title;
     }
     
-    echo '<div class="awesome-div"></div>';
     echo $GLOBALS['featured-ratings-admin-page']->render_featured_reviews();
- 
     echo $after_widget;
      
   }
@@ -384,7 +449,8 @@ class FeaturedRatingsWidget extends WP_Widget {
     }
 
     $current_block = "<p><label for='" . $this->get_field_id( 'title' ) . "'>" . _e( 'Title:' );
-    $current_block .= "<input class='widefat' id='" . $this->get_field_id( 'title' ) . "' name='" . $this->get_field_name( 'title' ) . "' type='text' value='$title' /></label></p>";
+    $current_block .= "<input class='widefat' id='" . $this->get_field_id( 'title' ) . "' name='" . $this->get_field_name( 'title' ) . "' type='text' value='$title' /></label></p>\n";
+    $current_block .= "<p><a href='" . admin_url( 'admin.php?page=wpbdp-manage-featured-ratings' ) . "'>Manage Featured Ratings</a></p>";
     echo $current_block;
   }
 
